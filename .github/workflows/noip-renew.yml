@@ -2,9 +2,9 @@ name: No-IP Auto Renew (2FA + Telegram)
 
 on:
   schedule:
-    # Chạy tự động lúc 08:00 sáng (giờ Việt Nam - GMT+7) vào Thứ 2, Thứ 4, Thứ 6, Chủ Nhật
-    # (No-IP chỉ mở nút Confirm khi tên miền còn <= 7 ngày, chạy cách ngày giúp không bao giờ lỡ lịch)
-    - cron: '0 1 * * 0,1,3,5'
+    # Chạy vào phút lẻ (02:23 UTC = 09:23 sáng giờ VN) mỗi ngày để né nghẽn hàng đợi đầu giờ (:00) của GitHub.
+    # Chạy hàng ngày giúp nếu GitHub có drop 1 hôm thì vẫn còn 6 hôm khác trong cửa sổ 7 ngày của No-IP.
+    - cron: '23 2 * * *'
 
   workflow_dispatch:
     inputs:
@@ -16,6 +16,9 @@ on:
         options:
           - '1'
           - '2'
+
+permissions:
+  contents: write
 
 concurrency:
   group: "noip-renew"
@@ -56,6 +59,19 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python noip_renew.py
+
+      - name: 💓 Keep-Alive Commit (Chống GitHub tự tắt Cron sau 60 ngày)
+        if: always()
+        run: |
+          TZ='Asia/Ho_Chi_Minh' date '+Lần kiểm tra gần nhất: %Y-%m-%d %H:%M:%S (GMT+7)' > last_run.txt
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_run.txt
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(keepalive): cập nhật thời gian kiểm tra No-IP [skip ci]"
+            git pull --rebase origin ${{ github.ref_name }} || true
+            git push origin HEAD:${{ github.ref_name }}
+          fi
 
       - name: 📸 Lưu ảnh chụp màn hình lên GitHub Artifacts
         if: always()
