@@ -261,37 +261,52 @@ class NoIPRobot:
         otp_code = self.get_totp_code()
         self.logger.log("Đang nhập mã xác thực 2FA (TOTP)...")
 
-        # Case 1: Single input field (challenge_code)
-        challenge_inputs = self.browser.find_elements(By.NAME, "challenge_code")
-        if not challenge_inputs:
-            challenge_inputs = self.browser.find_elements(By.ID, "challenge_code")
+        # Case 1: 6 individual digit inputs inside #totp-input / #otp-input / #verificationCode (No-IP 2026 UI)
+        otp_boxes = self.browser.find_elements(
+            By.CSS_SELECTOR,
+            "#totp-input input, #otp-input input, #verificationCode input[type='number'], #verificationCode input[type='text']",
+        )
+        visible_boxes = [b for b in otp_boxes if b.is_displayed()]
 
-        if challenge_inputs:
-            ele_challenge = challenge_inputs[0]
-            self.browser.execute_script("arguments[0].focus();", ele_challenge)
-            try:
-                ele_challenge.clear()
-                ele_challenge.send_keys(otp_code)
-            except Exception:
-                ActionChains(self.browser).send_keys(otp_code).perform()
+        if len(visible_boxes) >= 6:
+            for i in range(6):
+                try:
+                    visible_boxes[i].clear()
+                except Exception:
+                    pass
+                visible_boxes[i].send_keys(otp_code[i])
+            # Also ensure hidden #challenge_code is populated
+            self.browser.execute_script(
+                "var el = document.getElementById('challenge_code'); if (el) el.value = arguments[0];",
+                otp_code,
+            )
         else:
-            # Case 2: 6 individual digit inputs inside #otp-input or #verificationCode
-            otp_boxes = self.browser.find_elements(
-                By.CSS_SELECTOR, "#otp-input input, #verificationCode input[type='text'], #verificationCode input[type='number']"
-            )
-            if len(otp_boxes) >= 6:
-                for i in range(6):
-                    otp_boxes[i].send_keys(otp_code[i])
+            # Case 2: Single visible input field (challenge_code)
+            challenge_inputs = self.browser.find_elements(By.NAME, "challenge_code")
+            if challenge_inputs:
+                ele_challenge = challenge_inputs[0]
+                if ele_challenge.is_displayed():
+                    self.browser.execute_script("arguments[0].focus();", ele_challenge)
+                    try:
+                        ele_challenge.clear()
+                        ele_challenge.send_keys(otp_code)
+                    except Exception:
+                        ActionChains(self.browser).send_keys(otp_code).perform()
+                else:
+                    self.browser.execute_script("arguments[0].value = arguments[1];", ele_challenge, otp_code)
+                    ActionChains(self.browser).send_keys(otp_code).perform()
             else:
-                # Fallback: send keys directly to active element
                 ActionChains(self.browser).send_keys(otp_code).perform()
 
+        time.sleep(0.5)
         # Submit 2FA form
-        submit_btns = self.browser.find_elements(By.NAME, "submit")
+        submit_btns = self.browser.find_elements(
+            By.CSS_SELECTOR, "#verificationCode input[name='submit'], #verificationCode button[type='submit']"
+        )
         if not submit_btns:
-            submit_btns = self.browser.find_elements(
-                By.XPATH, "//button[@type='submit'] | //input[@type='submit']"
-            )
+            submit_btns = [
+                b for b in self.browser.find_elements(By.NAME, "submit") if b.is_displayed()
+            ]
         if submit_btns:
             submit_btns[0].click()
         else:
@@ -327,6 +342,11 @@ class NoIPRobot:
             elif len(self.browser.find_elements(By.ID, "zone-collection-wrapper")) > 0 and not self.host_statuses:
                 self._process_new_ui()
                 handled = True
+        else:
+            # Return to /dns/records for the final screenshot if we already processed new UI
+            if "dns/records" not in self.browser.current_url:
+                self.browser.get(self.DNS_RECORDS_URL)
+                time.sleep(3)
 
         # Save final results screenshot
         self.browser.save_screenshot("results.png")
@@ -408,26 +428,40 @@ class NoIPRobot:
                     "name": host_name,
                     "days": 30 if confirmed_this else (days_left or "?"),
                     "renewed": confirmed_this,
-                    "note": "Đã bấm Confirm gia hạn thành công" if confirmed_this else "Cần kiểm tra thủ công",
+                    "note": "Đã bấm Confirm gia hạn thành công (+30 ngày)" if confirmed_this else "Cần kiểm tra thủ công",
                 })
 
                 # Refresh page for next banner if multiple
                 self.browser.get(self.DNS_RECORDS_URL)
                 time.sleep(4)
 
-        # Also collect all active hosts on the page for reporting
+        # Collect all active hosts on the page for reporting
         soup = BeautifulSoup(self.browser.page_source, "html.parser")
-        fqdn_tags = soup.select("[data-fqdm]")
         existing_names = {h["name"] for h in self.host_statuses}
-        for tag in fqdn_tags:
-            fqdn = tag.get("data-fqdm", "").strip()
+
+        for row in soup.select(".zone-record"):
+            fqdn_el = row.select_one("[data-fqdm]")
+            fqdn = fqdn_el.get("data-fqdm", "").strip() if fqdn_el else ""
+            if not fqdn:
+                d_name = row.get("data-name", "").strip()
+                d_zone = row.get("data-zone", "").strip()
+                if d_name and d_zone:
+                    fqdn = f"{d_name}.{d_zone}"
             if fqdn and fqdn not in existing_names:
                 existing_names.add(fqdn)
+                last_update = row.get("data-update", "").strip()
+                row_text = " ".join(row.get_text().split())
+                ip_match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", row_text)
+                ip_str = f"IP: {ip_match.group(0)}" if ip_match else ""
+                extra = " | ".join(filter(None, [ip_str, f"Cập nhật: {last_update}" if last_update else ""]))
+                note = "Đang hoạt động tốt (chưa đến kỳ mở nút Confirm <= 7 ngày)"
+                if extra:
+                    note = f"{extra} — {note}"
                 self.host_statuses.append({
                     "name": fqdn,
                     "days": "> 7",
                     "renewed": False,
-                    "note": "Đang hoạt động tốt (chưa đến kỳ gia hạn <= 7 ngày)",
+                    "note": note,
                 })
 
         return True
