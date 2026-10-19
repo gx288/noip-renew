@@ -552,11 +552,12 @@ class NoIPRobot:
         self.browser.save_screenshot(f"{host_name}_success.png")
 
     def build_summary_message(self, success: bool, error_msg: str = "") -> str:
+        import html as html_lib
         status_header = "✅ <b>NO-IP AUTO RENEW: THÀNH CÔNG</b>" if success else "❌ <b>NO-IP AUTO RENEW: CÓ LỖI</b>"
         lines = [
             status_header,
             f"🕒 <b>Thời gian:</b> <code>{get_vn_time()}</code> (GMT+7)",
-            f"👤 <b>Tài khoản:</b> <code>{self.username}</code>",
+            f"👤 <b>Tài khoản:</b> <code>{html_lib.escape(self.username)}</code>",
         ]
 
         if success:
@@ -565,13 +566,17 @@ class NoIPRobot:
                 lines.append("\n🌐 <b>Danh sách Hostname:</b>")
                 for h in self.host_statuses:
                     icon = "✅" if h["renewed"] else "🟢"
+                    h_name = html_lib.escape(str(h["name"]))
+                    h_days = html_lib.escape(str(h["days"]))
+                    h_note = html_lib.escape(str(h["note"]))
                     lines.append(
-                        f"{icon} <code>{h['name']}</code> — Còn: <b>{h['days']} ngày</b>\n   └ <i>{h['note']}</i>"
+                        f"{icon} <code>{h_name}</code> — Còn: <b>{h_days} ngày</b>\n   └ <i>{h_note}</i>"
                     )
             else:
-                lines.append("ℹ️ <i>Đã kiểm tra trang quản trị, hiện không có tên miền nào sắp hết hạn (<= 7 ngày).</i>")
+                lines.append("ℹ️ <i>Đã kiểm tra trang quản trị, hiện không có tên miền nào sắp hết hạn (&lt;= 7 ngày).</i>")
         else:
-            lines.append(f"⚠️ <b>Chi tiết lỗi:</b> <code>{error_msg}</code>")
+            short_err = html_lib.escape(str(error_msg).splitlines()[0] if error_msg else "Unknown error")
+            lines.append(f"⚠️ <b>Chi tiết lỗi:</b> <code>{short_err}</code>")
 
         return "\n".join(lines)
 
