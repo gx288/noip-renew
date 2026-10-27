@@ -1,0 +1,105 @@
+name: No-IP Auto Renew (2FA + Telegram)
+
+on:
+  schedule:
+    # Chạy vào phút lẻ (02:23 UTC = 09:23 sáng giờ VN) mỗi ngày để né nghẽn hàng đợi đầu giờ (:00) của GitHub.
+    - cron: '23 2 * * *'
+
+  workflow_dispatch:
+    inputs:
+      force_notify:
+        description: 'Gửi báo cáo Telegram ngay cả khi chưa đến kỳ Confirm (Dùng khi muốn test)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      debug_level:
+        description: 'Mức độ ghi log & chụp ảnh debug (1 = Chuẩn, 2 = Chi tiết từng bước)'
+        required: false
+        default: '2'
+        type: choice
+        options:
+          - '1'
+          - '2'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "noip-renew"
+  cancel-in-progress: true
+
+jobs:
+  renew-noip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🛡️ Bật Cloudflare WARP đổi IP (Tránh my.noip.com chặn IP Datacenter Azure gây ERR_CONNECTION_RESET)
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ noble main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt update
+          sudo apt install -y cloudflare-warp
+          sudo warp-cli --accept-tos registration new || true
+          sudo warp-cli --accept-tos mode warp || true
+          sudo warp-cli --accept-tos connect || true
+          sleep 3
+          echo "Public IP sau khi kết nối WARP:"
+          curl -s https://api.ipify.org || true
+          echo ""
+
+      - name: 🐍 Cài đặt Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 🌐 Chuẩn bị Google Chrome (Selenium Manager tự động tải ChromeDriver khớp phiên bản)
+        run: |
+          sudo rm -f /usr/bin/chromedriver /usr/local/bin/chromedriver || true
+          google-chrome --version
+
+      - name: 📦 Cài đặt thư viện Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🚀 Chạy kịch bản gia hạn No-IP & kiểm tra hạn 30 ngày
+        env:
+          NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
+          NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
+          NOIP_2FA_SECRET_KEY: ${{ secrets.NOIP_2FA_SECRET_KEY }}
+          NOIP_DEBUG: ${{ inputs.debug_level || '2' }}
+          FORCE_NOTIFY: ${{ inputs.force_notify || 'false' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python noip_renew.py
+
+      - name: 💓 Lưu trạng thái hạn tên miền & Keep-Alive Commit
+        if: always()
+        run: |
+          TZ='Asia/Ho_Chi_Minh' date '+Lần kiểm tra gần nhất: %Y-%m-%d %H:%M:%S (GMT+7)' > last_run.txt
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_run.txt renew_state.json
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(keepalive): cập nhật trạng thái hạn tên miền No-IP [skip ci]"
+            git pull --rebase origin ${{ github.ref_name }} || true
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+      - name: 📸 Lưu ảnh chụp màn hình lên GitHub Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: noip-screenshots-${{ github.run_number }}
+          path: "*.png"
+          if-no-files-found: ignore
+          retention-days: 14
