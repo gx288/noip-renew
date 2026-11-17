@@ -15,12 +15,14 @@ import re
 import sys
 import time
 import json
+import hmac
+import struct
 import base64
+import hashlib
 import html as html_lib
 from datetime import datetime, timezone, timedelta
 from string import Template
 
-import pyotp
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -198,12 +200,20 @@ class NoIPRobot:
         return browser
 
     def get_totp_code(self) -> str:
-        totp = pyotp.TOTP(self.totp_secret)
-        time_remaining = totp.interval - (time.time() % totp.interval)
+        interval = 30
+        time_remaining = interval - (time.time() % interval)
         if time_remaining < 3:
             self.logger.log(f"Đợi {time_remaining:.1f}s để lấy mã 2FA chu kỳ mới...")
             time.sleep(time_remaining + 0.5)
-        return totp.now()
+        secret = self.totp_secret
+        padding = "=" * ((8 - len(secret) % 8) % 8)
+        key = base64.b32decode(secret.upper() + padding, casefold=True)
+        counter = int(time.time() // interval)
+        msg = struct.pack(">Q", counter)
+        digest = hmac.new(key, msg, hashlib.sha1).digest()
+        offset = digest[-1] & 0x0F
+        code = (struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF) % 1000000
+        return f"{code:06d}"
 
     def login(self):
         self.logger.log(f"Đang mở trang đăng nhập {self.LOGIN_URL}...")
