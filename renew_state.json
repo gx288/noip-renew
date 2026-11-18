@@ -1,14 +1,14 @@
 {
-  "updated_at": "2026-11-17 17:50:15",
+  "updated_at": "2026-11-18 17:19:36",
   "hosts": {
     "hungpc2026.onthewifi.com": {
       "host_id": "93849419",
       "target_ip": "171.224.84.125",
       "create_date": "Sep 19, 2026 01:45:38",
-      "last_ip_update": "Nov 17, 2026 14:33:12",
+      "last_ip_update": "Nov 18, 2026 15:12:33",
       "last_confirmed_date": "2026-11-11",
-      "days_remaining": 31,
-      "days_until_confirmation": 24,
+      "days_remaining": 30,
+      "days_until_confirmation": 23,
       "in_redemption_at": "December 18th, 2026",
       "permanent_deletion_at": "January 1st, 2027",
       "is_expiring_soon": false,
